@@ -40,8 +40,10 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
    *         Colour depth is the only consideration.
    * 
    */
-  ESP_LOGI("I2S-DMA", "Free heap: %d", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-  ESP_LOGI("I2S-DMA", "Free SPIRAM: %d", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  #if defined(ESP_LOG)
+    ESP_LOGI("I2S-DMA", "Free heap: %d", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    ESP_LOGI("I2S-DMA", "Free SPIRAM: %d", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  #endif
 
   size_t allocated_fb_memory = 0;
 
@@ -56,9 +58,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
       auto ptr = std::make_shared<rowBitStruct>(PIXELS_PER_ROW, m_cfg.getPixelColorDepthBits());
 
       if (ptr->data == nullptr) {
-
-        ESP_LOGE("I2S-DMA", "CRITICAL ERROR: Not enough memory for requested colour depth of %d bits! Please reduce pixel_color_depth_bits value.\r\n", m_cfg.getPixelColorDepthBits());
-
+        #if defined(ESP_LOG)
+          ESP_LOGE("I2S-DMA", "CRITICAL ERROR: Not enough memory for requested colour depth of %d bits! Please reduce pixel_color_depth_bits value.\r\n", m_cfg.getPixelColorDepthBits());
+        #endif
         return false;
         // TODO: should we release all previous rowBitStructs here???
       }
@@ -68,8 +70,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
       ++frame_buffer[fb].rows;
     }
   }
-  ESP_LOGI("I2S-DMA", "Allocating %d bytes memory for DMA BCM framebuffer(s).", allocated_fb_memory);
-
+  #if defined(ESP_LOG)
+    ESP_LOGI("I2S-DMA", "Allocating %d bytes memory for DMA BCM framebuffer(s).", allocated_fb_memory);
+  #endif
 
   /***
    * Step 1: Check what the minimum refresh rate is, and calculate the lsbMsbTransitionBit
@@ -82,7 +85,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
   
 #if !defined(FORCE_COLOR_DEPTH)
 
-  ESP_LOGI("I2S-DMA", "Minimum visual refresh rate (scan rate from panel top to bottom) requested: %d Hz", m_cfg.min_refresh_rate);
+  #if defined(ESP_LOG)
+    ESP_LOGI("I2S-DMA", "Minimum visual refresh rate (scan rate from panel top to bottom) requested: %d Hz", m_cfg.min_refresh_rate);
+  #endif
 
   while (1)
   {
@@ -102,7 +107,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
     int actualRefreshRate = 1000000000UL / (nsPerFrame);
     calculated_refresh_rate = actualRefreshRate;
 
-    ESP_LOGW("I2S-DMA", "lsbMsbTransitionBit of %d gives %d Hz refresh rate.", lsbMsbTransitionBit, actualRefreshRate);
+    #if defined(ESP_LOG)
+      ESP_LOGW("I2S-DMA", "lsbMsbTransitionBit of %d gives %d Hz refresh rate.", lsbMsbTransitionBit, actualRefreshRate);
+    #endif
 
     if (actualRefreshRate > m_cfg.min_refresh_rate)
       break;
@@ -115,11 +122,13 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
 
   if (lsbMsbTransitionBit > 0)
   {
-    ESP_LOGW("I2S-DMA", "lsbMsbTransitionBit of %d used to achieve refresh rate of %d Hz. Percieved colour depth to the eye may be reduced.", lsbMsbTransitionBit, m_cfg.min_refresh_rate);
+    #if defined(ESP_LOG)
+      ESP_LOGW("I2S-DMA", "lsbMsbTransitionBit of %d used to achieve refresh rate of %d Hz. Percieved colour depth to the eye may be reduced.", lsbMsbTransitionBit, m_cfg.min_refresh_rate);
+    #endif
   }
-
-  ESP_LOGI("I2S-DMA", "DMA frame buffer color depths: %d", m_cfg.getPixelColorDepthBits());
-
+  #if defined(ESP_LOG)
+    ESP_LOGI("I2S-DMA", "DMA frame buffer color depths: %d", m_cfg.getPixelColorDepthBits());
+  #endif
 #endif
 
   /***
@@ -135,12 +144,13 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
   int    dma_descs_per_row_all_cdepths	  = (frame_buffer[0].rowBits[0]->getColorDepthSize(false) + DMA_MAX - 1 ) / DMA_MAX;
   size_t last_dma_desc_bytes_all_cdepths  = (frame_buffer[0].rowBits[0]->getColorDepthSize(false) % DMA_MAX);
 
-  // Logging the calculated values
-  ESP_LOGV("I2S-DMA", "dma_descs_per_row_1cdepth: %d", dma_descs_per_row_1cdepth);
-  ESP_LOGV("I2S-DMA", "last_dma_desc_bytes_1cdepth: %zu", last_dma_desc_bytes_1cdepth);
-  ESP_LOGV("I2S-DMA", "dma_descs_per_row_all_cdepths: %d", dma_descs_per_row_all_cdepths);
-  ESP_LOGV("I2S-DMA", "last_dma_desc_bytes_all_cdepths: %zu", last_dma_desc_bytes_all_cdepths);
-  
+  #if defined(ESP_LOG)
+    // Logging the calculated values
+    ESP_LOGV("I2S-DMA", "dma_descs_per_row_1cdepth: %d", dma_descs_per_row_1cdepth);
+    ESP_LOGV("I2S-DMA", "last_dma_desc_bytes_1cdepth: %zu", last_dma_desc_bytes_1cdepth);
+    ESP_LOGV("I2S-DMA", "dma_descs_per_row_all_cdepths: %d", dma_descs_per_row_all_cdepths);
+    ESP_LOGV("I2S-DMA", "last_dma_desc_bytes_all_cdepths: %zu", last_dma_desc_bytes_all_cdepths);
+  #endif  
  
   // Calculate per-row number
   int dma_descriptors_per_row = dma_descs_per_row_all_cdepths;
@@ -155,8 +165,10 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
   // Allocate DMA descriptors 
   int dma_descriptions_required = dma_descriptors_per_row * ROWS_PER_FRAME;
   
-  ESP_LOGV("I2S-DMA", "DMA descriptors per row: %d", dma_descriptors_per_row);  
-  ESP_LOGV("I2S-DMA", "DMA descriptors required per buffer: %d", dma_descriptions_required);    
+  #if defined(ESP_LOG)
+    ESP_LOGV("I2S-DMA", "DMA descriptors per row: %d", dma_descriptors_per_row);  
+    ESP_LOGV("I2S-DMA", "DMA descriptors required per buffer: %d", dma_descriptions_required);    
+  #endif
 
   /***
    * Step 3:  Allocate the DMA descriptor memory via. the relevant platform DMA implementation class.
@@ -231,8 +243,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
 
     } // end all rows
 	
-    ESP_LOGI("I2S-DMA", "Created %d DMA descriptors for buffer %d.", _dmadescriptor_count, fb);	
-	
+    #if defined(ESP_LOG)
+      ESP_LOGI("I2S-DMA", "Created %d DMA descriptors for buffer %d.", _dmadescriptor_count, fb);	
+    #endif
   } // end framebuffer loop
 	  
 	/*
@@ -298,7 +311,9 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
 
   dma_bus.config(bus_cfg);
 
-  ESP_LOGI("I2S-DMA", "DMA setup completed");
+  #if defined(ESP_LOG)
+    ESP_LOGI("I2S-DMA", "DMA setup completed");
+  #endif
   
   initialized = true;
 

@@ -5,7 +5,9 @@
 #include <vector>
 #include <memory>
 #include <esp_err.h>
+#if defined(ESP_LOG)
 #include <esp_log.h>
+#endif
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 
@@ -358,7 +360,9 @@ struct HUB75_I2S_CFG
       {
         pixel_color_depth_bits = 2;
       }
-      ESP_LOGW("HUB75_I2S_CFG", "Invalid pixel_color_depth_bits (%d): 2 <= pixel_color_depth_bits <= %d, choosing nearest valid %d", _pixel_color_depth_bits, PIXEL_COLOR_DEPTH_BITS_MAX, pixel_color_depth_bits);
+      #if defined(ESP_LOG)
+        ESP_LOGW("HUB75_I2S_CFG", "Invalid pixel_color_depth_bits (%d): 2 <= pixel_color_depth_bits <= %d, choosing nearest valid %d", _pixel_color_depth_bits, PIXEL_COLOR_DEPTH_BITS_MAX, pixel_color_depth_bits);
+      #endif
     }
     else
     {
@@ -433,20 +437,22 @@ public:
     if (!config_set)
       return false;
 
-    ESP_LOGI("begin()", "Using GPIO %d for R1_PIN", m_cfg.gpio.r1);
-    ESP_LOGI("begin()", "Using GPIO %d for G1_PIN", m_cfg.gpio.g1);
-    ESP_LOGI("begin()", "Using GPIO %d for B1_PIN", m_cfg.gpio.b1);
-    ESP_LOGI("begin()", "Using GPIO %d for R2_PIN", m_cfg.gpio.r2);
-    ESP_LOGI("begin()", "Using GPIO %d for G2_PIN", m_cfg.gpio.g2);
-    ESP_LOGI("begin()", "Using GPIO %d for B2_PIN", m_cfg.gpio.b2);
-    ESP_LOGI("begin()", "Using GPIO %d for A_PIN", m_cfg.gpio.a);
-    ESP_LOGI("begin()", "Using GPIO %d for B_PIN", m_cfg.gpio.b);
-    ESP_LOGI("begin()", "Using GPIO %d for C_PIN", m_cfg.gpio.c);
-    ESP_LOGI("begin()", "Using GPIO %d for D_PIN", m_cfg.gpio.d);
-    ESP_LOGI("begin()", "Using GPIO %d for E_PIN", m_cfg.gpio.e);
-    ESP_LOGI("begin()", "Using GPIO %d for LAT_PIN", m_cfg.gpio.lat);
-    ESP_LOGI("begin()", "Using GPIO %d for OE_PIN", m_cfg.gpio.oe);
-    ESP_LOGI("begin()", "Using GPIO %d for CLK_PIN", m_cfg.gpio.clk);
+    #if defined(ESP_LOG)
+      ESP_LOGI("begin()", "Using GPIO %d for R1_PIN", m_cfg.gpio.r1);
+      ESP_LOGI("begin()", "Using GPIO %d for G1_PIN", m_cfg.gpio.g1);
+      ESP_LOGI("begin()", "Using GPIO %d for B1_PIN", m_cfg.gpio.b1);
+      ESP_LOGI("begin()", "Using GPIO %d for R2_PIN", m_cfg.gpio.r2);
+      ESP_LOGI("begin()", "Using GPIO %d for G2_PIN", m_cfg.gpio.g2);
+      ESP_LOGI("begin()", "Using GPIO %d for B2_PIN", m_cfg.gpio.b2);
+      ESP_LOGI("begin()", "Using GPIO %d for A_PIN", m_cfg.gpio.a);
+      ESP_LOGI("begin()", "Using GPIO %d for B_PIN", m_cfg.gpio.b);
+      ESP_LOGI("begin()", "Using GPIO %d for C_PIN", m_cfg.gpio.c);
+      ESP_LOGI("begin()", "Using GPIO %d for D_PIN", m_cfg.gpio.d);
+      ESP_LOGI("begin()", "Using GPIO %d for E_PIN", m_cfg.gpio.e);
+      ESP_LOGI("begin()", "Using GPIO %d for LAT_PIN", m_cfg.gpio.lat);
+      ESP_LOGI("begin()", "Using GPIO %d for OE_PIN", m_cfg.gpio.oe);
+      ESP_LOGI("begin()", "Using GPIO %d for CLK_PIN", m_cfg.gpio.clk);
+    #endif
 
     // initialize some specific panel drivers
     if (m_cfg.driver)
@@ -479,18 +485,22 @@ public:
 
     // Flush the DMA buffers prior to configuring DMA - Avoid visual artefacts on boot.
     resetbuffers(); // Must fill the DMA buffer with the initial output bit sequence or the panel will display garbage
-    ESP_LOGV("being()", "Completed resetbuffers()");	
-
+    #if defined(ESP_LOG)
+      ESP_LOGV("being()", "Completed resetbuffers()");	
+    #endif
 	flipDMABuffer(); // display back buffer 0, draw to 1, ignored if double buffering isn't enabled.		
+  #if defined(ESP_LOG)
     ESP_LOGV("being()", "Completed flipDMABuffer()");		
-
+  #endif
 	// Start output output
 	dma_bus.init();
+  #if defined(ESP_LOG)
     ESP_LOGV("being()", "Completed dma_bus.init()");	
-	
+	#endif
 	dma_bus.dma_transfer_start();
+  #if defined(ESP_LOG)  
     ESP_LOGV("being()", "Completed dma_bus.dma_transfer_start()");		
-
+  #endif
     return initialized;
   }
 
@@ -646,7 +656,10 @@ public:
   {
     if (!initialized)
     {
-      ESP_LOGI("setBrightness()", "Tried to set output brightness before begin()");
+      #if defined(ESP_LOG)
+        ESP_LOGI("setBrightness()", "Tried to set output brightness before begin()");
+      #endif
+
       return;
     }
 
