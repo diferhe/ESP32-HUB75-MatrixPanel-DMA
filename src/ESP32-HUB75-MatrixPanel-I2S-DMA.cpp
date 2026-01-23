@@ -25,12 +25,74 @@
 #define ESP32_TX_FIFO_POSITION_ADJUST(x_coord) x_coord
 #endif
 
+
+
+
+
+
+  /* LED Brightness Compensation */                                                               
+#ifndef NO_CIE1931                                                                                
+  /* CIE 1931 correction with bit-depth-optimized LUTs*/                                            
+  #ifdef LUT_NATIVE_BIT_DEPTH
+
+
+    // Optimized path: LUT maps 8-bit input (0-255) directly to target bit depth output
+    #define DO_BRIGHTNESS_COMPENSATION()                                                              \
+      auto red_val   = lumConvTab[red];                                                               \
+      auto green_val = lumConvTab[green];                                                             \
+      auto blue_val  = lumConvTab[blue];                                                              
+
+
+  #else
+    // Fallback for non-standard bit depths: 12-bit LUT with shift+round to target depth
+
+    #define DO_BRIGHTNESS_COMPENSATION()                                                              \
+      uint16_t red16   = lumConvTab[red];                                                             \
+      uint16_t green16 = lumConvTab[green];                                                           \
+      uint16_t blue16  = lumConvTab[blue];                                                            \
+                                                                                                      \
+      uint8_t shift_amount = 12 - m_cfg.getPixelColorDepthBits();                                     \
+      uint16_t rounding = 1 << (shift_amount - 1);                                                    \
+      uint16_t max_val = (1 << m_cfg.getPixelColorDepthBits()) -1;                                    \
+      auto red_val   = (red16 + rounding) >> shift_amount;                                            \
+      auto green_val = (green16 + rounding) >> shift_amount;                                          \
+      auto blue_val  = (blue16 + rounding) >> shift_amount;                                           \
+                                                                                                      \
+      red_val = red_val > max_val ? max_val : red_val;                                                \
+      green_val = green_val > max_val ? max_val : green_val;                                          \
+      blue_val = blue_val > max_val ? max_val : blue_val;  
+  #endif
+#else
+  // NO_CIE1931: linear scaling with rounding
+  #define DO_BRIGHTNESS_COMPENSATION()                                                               \
+    uint16_t red16   = red * 256u;                                                                   \
+    uint16_t green16 = green * 256u;                                                                 \
+    uint16_t blue16  = blue * 256u;                                                                  \
+                                                                                                     \
+    uint8_t shift_amount = 16 - m_cfg.getPixelColorDepthBits();                                      \
+    uint16_t rounding = (1 << (shift_amount - 1))-1;                                                 \
+    uint16_t max_val = (1 << m_cfg.getPixelColorDepthBits()) -1;                                     \
+    uint16_t red_val   = (red16 + rounding) >> shift_amount;                                         \
+    uint16_t green_val = (green16 + rounding) >> shift_amount;                                       \
+    uint16_t blue_val  = (blue16 + rounding) >> shift_amount;                                        \
+    red_val = red_val > max_val ? max_val : red_val;                                                 \
+    green_val = green_val > max_val ? max_val : green_val;                                           \
+    blue_val = blue_val > max_val ? max_val : blue_val;                                              
+#endif
+
+
+
+
 /* This library is designed to take an 8 bit / 1 byte value (0-255) for each R G B colour sub-pixel.
- * The PIXEL_COLOR_DEPTH_BITS should always be '8' as a result.
- * However, if the library is to be used with lower colour depth (i.e. 6 bit colour), then we need to ensure the 8-bit value passed to the colour masking
- * is adjusted accordingly to ensure the LSB's are shifted left to MSB, by the difference. Otherwise the colours will be all screwed up.
+ *
+ * When CIE1931 correction is enabled, input values are passed through a perceptually-linear
+ * brightness curve (lumConvTab) that maps to the target bit depth. Native lookup tables are
+ * provided for common bit depths (6, 7, 8, 10, 12-bit), while other depths use runtime
+ * conversion with rounding to preserve precision and minimize banding artifacts.
+ *
+ * When NO_CIE1931 is defined, linear scaling is used: 8-bit input is scaled to 16-bit range
+ * (input * 257), then shifted down to the target bit depth with rounding.
  */
-#define PIXEL_COLOR_MASK_BIT(color_depth_index, mask_offset) (1 << (color_depth_index + mask_offset))
 
 bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
 {
@@ -111,7 +173,7 @@ bool MatrixPanel_I2S_DMA::setupDMA(const HUB75_I2S_CFG &_cfg)
       ESP_LOGW("I2S-DMA", "lsbMsbTransitionBit of %d gives %d Hz refresh rate.", lsbMsbTransitionBit, actualRefreshRate);
     #endif
 
-    if (actualRefreshRate > m_cfg.min_refresh_rate)
+    if (actualRefreshRate >= m_cfg.min_refresh_rate)
       break;
 
     if (lsbMsbTransitionBit < m_cfg.getPixelColorDepthBits() - 1)
@@ -358,16 +420,7 @@ void IRAM_ATTR MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint16_t x_coord, uint
    * i.e. It's almost impossible for colour_depth_idx of 0 to be sent out to the MATRIX unless the 'value' of a colour is exactly '1'
    * https://ledshield.wordpress.com/2012/11/13/led-brightness-to-your-eye-gamma-correction-no/
    */
-  uint16_t red16, green16, blue16;
-#ifdef NO_CIE1931
-  red16 	= red;
-  green16 	= green;
-  blue16 	= blue;
-#else  
-  red16 = lumConvTab[red];
-  green16 = lumConvTab[green];
-  blue16 = lumConvTab[blue];
-#endif
+  DO_BRIGHTNESS_COMPENSATION() 
 
   /* When using the drawPixel, we are obviously only changing the value of one x,y position,
    * however, the two-scan panels paint TWO lines at the same time
@@ -397,20 +450,17 @@ void IRAM_ATTR MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint16_t x_coord, uint
   {
     --colour_depth_idx;
 
-#ifdef NO_CIE1931
-    uint16_t mask = colour_depth_idx;
-#else	
-    uint16_t mask = PIXEL_COLOR_MASK_BIT(colour_depth_idx, MASK_OFFSET);
-#endif	
+    // Extract bit at current depth index
+    uint16_t mask = (1 << colour_depth_idx);
     uint16_t RGB_output_bits = 0;
 
     /* Per the .h file, the order of the output RGB bits is:
      * BIT_B2, BIT_G2, BIT_R2,    BIT_B1, BIT_G1, BIT_R1     */
-    RGB_output_bits |= (bool)(blue16 & mask); // --B
+    RGB_output_bits |= (bool)(blue_val & mask); // --B
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(green16 & mask); // -BG
+    RGB_output_bits |= (bool)(green_val & mask); // -BG
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(red16 & mask); // BGR
+    RGB_output_bits |= (bool)(red_val & mask); // BGR
     RGB_output_bits <<= _colourbitoffset;    // shift colour bits to the required position
 
     // Get the contents at this address,
@@ -436,35 +486,23 @@ void MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint8_t red, uint8_t green, uint
     return;
 
   /* https://ledshield.wordpress.com/2012/11/13/led-brightness-to-your-eye-gamma-correction-no/ */
-  uint16_t red16, green16, blue16;
-#ifdef NO_CIE1931
-  red16 	= red;
-  green16 	= green;
-  blue16 	= blue;
-#else  
-  red16 = lumConvTab[red];
-  green16 = lumConvTab[green];
-  blue16 = lumConvTab[blue];
-#endif
+  DO_BRIGHTNESS_COMPENSATION()  
 
   for (uint8_t colour_depth_idx = 0; colour_depth_idx < m_cfg.getPixelColorDepthBits(); colour_depth_idx++) // colour depth - 8 iterations
   {
     // let's precalculate RGB1 and RGB2 bits than flood it over the entire DMA buffer
     uint16_t RGB_output_bits = 0;
 
-#ifdef NO_CIE1931
-    uint16_t mask = colour_depth_idx;
-#else	
-    uint16_t mask = PIXEL_COLOR_MASK_BIT(colour_depth_idx, MASK_OFFSET);
-#endif	
+    // Extract bit at current depth index
+    uint16_t mask = (1 << colour_depth_idx);
 
     /* Per the .h file, the order of the output RGB bits is:
      * BIT_B2, BIT_G2, BIT_R2,    BIT_B1, BIT_G1, BIT_R1      */
-    RGB_output_bits |= (bool)(blue16 & mask); // --B
+    RGB_output_bits |= (bool)(blue_val & mask); // --B
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(green16 & mask); // -BG
+    RGB_output_bits |= (bool)(green_val & mask); // -BG
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(red16 & mask); // BGR
+    RGB_output_bits |= (bool)(red_val & mask); // BGR
 
     // Duplicate and shift across so we have have 6 populated bits of RGB1 and RGB2 pin values suitable for DMA buffer
     RGB_output_bits |= RGB_output_bits << BITS_RGB2_OFFSET; // BGRBGR
@@ -529,13 +567,13 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
 	do
 	{
 		--x_pixel;
-		if (m_cfg.driver == HUB75_I2S_CFG::SM5266P)
+		if (m_cfg.line_decoder == HUB75_I2S_CFG::SM5266P)
 		{
 			// modifications here for row shift register type SM5266P
 			// https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-I2S-DMA/issues/164
 			row[x_pixel] = abcde & (0x18 << BITS_ADDR_OFFSET); // mask out the bottom 3 bits which are the clk di bk inputs
 		}
-		else if (m_cfg.driver == HUB75_I2S_CFG::DP3246_SM5368) 
+		else if (m_cfg.line_decoder  == HUB75_I2S_CFG::SM5368) 
 		{
 			row[ESP32_TX_FIFO_POSITION_ADJUST(x_pixel)] = 0x0000;
 		}
@@ -559,13 +597,13 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
     {
       --x_pixel;
 
-      if (m_cfg.driver == HUB75_I2S_CFG::SM5266P)
+      if (m_cfg.line_decoder == HUB75_I2S_CFG::SM5266P)
       {
         // modifications here for row shift register type SM5266P
         // https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-I2S-DMA/issues/164
         row[x_pixel] = abcde & (0x18 << BITS_ADDR_OFFSET); // mask out the bottom 3 bits which are the clk di bk inputs
       }
-      else if (m_cfg.driver == HUB75_I2S_CFG::DP3246_SM5368) 
+      else if (m_cfg.line_decoder  == HUB75_I2S_CFG::SM5368) 
       {
         row[ESP32_TX_FIFO_POSITION_ADJUST(x_pixel)] = 0x0000;
       }
@@ -578,7 +616,7 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
 
     // modifications here for row shift register type SM5266P
     // https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-I2S-DMA/issues/164
-    if (m_cfg.driver == HUB75_I2S_CFG::SM5266P)
+    if (m_cfg.line_decoder == HUB75_I2S_CFG::SM5266P)
     {
       uint16_t serialCount;
       uint16_t latch;
@@ -594,11 +632,11 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
     } // end SM5266P
 
     // row selection for SM5368 shift regs with ABC-only addressing. A is row clk, B is BK and C is row data
-    if (m_cfg.driver == HUB75_I2S_CFG::DP3246_SM5368) 
+    if (m_cfg.line_decoder == HUB75_I2S_CFG::SM5368) 
     {
       x_pixel = fb->rowBits[row_idx]->width - 1;                                                                        // last pixel in first block)
       uint16_t c = (row_idx == 0) ? BIT_C : 0x0000;                                                                     // set row data (C) when row==0, then push through shift regs for all other rows
-      row[ESP32_TX_FIFO_POSITION_ADJUST(x_pixel - 1)] |= c;                                                             // set row data
+      row[ESP32_TX_FIFO_POSITION_ADJUST(x_pixel - 1)] |= c | BIT_B;                                                            // set row data
       row[ESP32_TX_FIFO_POSITION_ADJUST(x_pixel + 0)] |= c | BIT_A | BIT_B;                                             // set row clk and bk, carry row data
     } // end DP3246_SM5368
 
@@ -613,7 +651,7 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
       row = fb->rowBits[row_idx]->getDataPtr(colouridx);
 
       // DP3246 needs the latch high for 3 clock cycles, so start 2 cycles earlier
-      if (m_cfg.driver == HUB75_I2S_CFG::DP3246_SM5368) 
+      if (m_cfg.driver == HUB75_I2S_CFG::DP3246) 
       {
         row[ESP32_TX_FIFO_POSITION_ADJUST(fb->rowBits[row_idx]->width - 3)] |= BIT_LAT;   // DP3246 needs 3 clock cycle latch 
         row[ESP32_TX_FIFO_POSITION_ADJUST(fb->rowBits[row_idx]->width - 2)] |= BIT_LAT;   // DP3246 needs 3 clock cycle latch 
@@ -673,9 +711,25 @@ void MatrixPanel_I2S_DMA::setBrightnessOE(uint8_t brt, const int _buff_id)
       char bitshift = (_depth - lsbMsbTransitionBit - 1) >> 1;
 
       char rightshift = std::max(bitplane - bitshift - 2, 0);
-      // calculate the OE disable period by brightness, and also blanking
-      int brightness_in_x_pixels = ((_width - _blank) * brt) >> (7 + rightshift);
-      brightness_in_x_pixels = (brightness_in_x_pixels >> 1) | (brightness_in_x_pixels & 1);
+
+      // Calculate the OE disable period by brightness and latch blanking.
+      // First, determine the maximum pixels for this specific bitplane (accounting for PWM time weighting).
+      // Then scale that maximum by brightness (0-255).
+      // This ensures all bitplanes scale proportionally and reach their maximums simultaneously.
+      int max_pixels_for_bitplane = (_width - _blank) >> rightshift;
+      int brightness_in_x_pixels = (max_pixels_for_bitplane * brt) >> 8;
+
+      // Ensure at least 1 pixel is enabled for any brightness > 0
+      if (brt > 0 && brightness_in_x_pixels == 0) {
+        brightness_in_x_pixels = 1;
+      }
+
+      // Safety margin: Ensure we never exceed max_pixels - 1 to maintain blanking headroom.
+      // At extreme brightness (252-255), we need at least (_blank + 1) total blanking pixels
+      // to prevent ghosting and artifacts, especially with high pixel density (many white pixels).
+      if (brightness_in_x_pixels > max_pixels_for_bitplane - 1) {
+        brightness_in_x_pixels = max_pixels_for_bitplane - 1;
+      }
 
       // switch pointer to a row for a specific color index
       ESP32_I2S_DMA_STORAGE_TYPE *row = fb->rowBits[row_idx]->getDataPtr(colouridx);
@@ -801,16 +855,7 @@ void MatrixPanel_I2S_DMA::hlineDMA(int16_t x_coord, int16_t y_coord, int16_t l, 
   //    l = PIXELS_PER_ROW - x_coord + 1;     // reset width to end of row
 
   /* LED Brightness Compensation */
-  uint16_t red16, green16, blue16;
-#ifndef NO_CIE1931
-  red16 = lumConvTab[red];
-  green16 = lumConvTab[green];
-  blue16 = lumConvTab[blue];
-#else
-  red16 = red << MASK_OFFSET;
-  green16 = green << MASK_OFFSET;
-  blue16 = blue << MASK_OFFSET;
-#endif
+DO_BRIGHTNESS_COMPENSATION() 
 
   uint16_t _colourbitclear = BITMASK_RGB1_CLEAR, _colourbitoffset = 0;
 
@@ -829,21 +874,17 @@ void MatrixPanel_I2S_DMA::hlineDMA(int16_t x_coord, int16_t y_coord, int16_t l, 
 
     // let's precalculate RGB1 and RGB2 bits than flood it over the entire DMA buffer
     uint16_t RGB_output_bits = 0;
-    //    uint8_t mask = (1 << colour_depth_idx COLOR_DEPTH_LESS_THAN_8BIT_ADJUST);
-    // #if PIXEL_COLOR_DEPTH_BITS < 8
-    //     uint8_t mask = (1 << (colour_depth_idx+MASK_OFFSET)); // expect 24 bit colour (8 bits per RGB subpixel)
-    // #else
-    //     uint8_t mask = (1 << (colour_depth_idx)); // expect 24 bit colour (8 bits per RGB subpixel)
-    // #endif
-    uint16_t mask = PIXEL_COLOR_MASK_BIT(colour_depth_idx, MASK_OFFSET);
+
+    // Extract bit at current depth index
+    uint16_t mask = (1 << colour_depth_idx);
 
     /* Per the .h file, the order of the output RGB bits is:
      * BIT_B2, BIT_G2, BIT_R2,    BIT_B1, BIT_G1, BIT_R1     */
-    RGB_output_bits |= (bool)(blue16 & mask); // --B
+    RGB_output_bits |= (bool)(blue_val & mask); // --B
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(green16 & mask); // -BG
+    RGB_output_bits |= (bool)(green_val & mask); // -BG
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(red16 & mask); // BGR
+    RGB_output_bits |= (bool)(red_val & mask); // BGR
     RGB_output_bits <<= _colourbitoffset;    // shift color bits to the required position
 
     // Get the contents at this address,
@@ -897,17 +938,7 @@ void MatrixPanel_I2S_DMA::vlineDMA(int16_t x_coord, int16_t y_coord, int16_t l, 
   // if (y_coord + l > m_cfg.mx_height)
   ///    l = m_cfg.mx_height - y_coord + 1;     // reset width to end of col
 
-  /* LED Brightness Compensation */
-  uint16_t red16, green16, blue16;
-#ifndef NO_CIE1931
-  red16 = lumConvTab[red];
-  green16 = lumConvTab[green];
-  blue16 = lumConvTab[blue];
-#else
-  red16 = red << MASK_OFFSET;
-  green16 = green << MASK_OFFSET;
-  blue16 = blue << MASK_OFFSET;
-#endif
+  DO_BRIGHTNESS_COMPENSATION() 
 
   /*
   #if defined(ESP32_THE_ORIG)
@@ -922,24 +953,17 @@ void MatrixPanel_I2S_DMA::vlineDMA(int16_t x_coord, int16_t y_coord, int16_t l, 
   { // Iterating through colour depth bits (8 iterations)
     --colour_depth_idx;
 
-    // let's precalculate RGB1 and RGB2 bits than flood it over the entire DMA buffer
-    //    uint8_t mask = (1 << colour_depth_idx COLOR_DEPTH_LESS_THAN_8BIT_ADJUST);
-    // #if PIXEL_COLOR_DEPTH_BITS < 8
-    //     uint8_t mask = (1 << (colour_depth_idx+MASK_OFFSET)); // expect 24 bit colour (8 bits per RGB subpixel)
-    // #else
-    //     uint8_t mask = (1 << (colour_depth_idx)); // expect 24 bit colour (8 bits per RGB subpixel)
-    // #endif
-
-    uint16_t mask = PIXEL_COLOR_MASK_BIT(colour_depth_idx, MASK_OFFSET);
+    // Extract bit at current depth index
+    uint16_t mask = (1 << colour_depth_idx);
     uint16_t RGB_output_bits = 0;
 
     /* Per the .h file, the order of the output RGB bits is:
      * BIT_B2, BIT_G2, BIT_R2,    BIT_B1, BIT_G1, BIT_R1   */
-    RGB_output_bits |= (bool)(blue16 & mask); // --B
+    RGB_output_bits |= (bool)(blue_val & mask); // --B
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(green16 & mask); // -BG
+    RGB_output_bits |= (bool)(green_val & mask); // -BG
     RGB_output_bits <<= 1;
-    RGB_output_bits |= (bool)(red16 & mask); // BGR
+    RGB_output_bits |= (bool)(red_val & mask); // BGR
 
     int16_t _l = 0, _y = y_coord;
     uint16_t _colourbitclear = BITMASK_RGB1_CLEAR;
